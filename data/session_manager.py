@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 import bcrypt
+import requests
 
 from data.models import Employee
 
@@ -25,17 +26,23 @@ class SessionManager:
         self.session_id: Optional[str] = None
 
     def login(self, username: str, password: str) -> tuple:
-        """Returns (success: bool, message: str)."""
-        account = self._storage.find_account_by_username(username)
-        if account is None:
-            return False, "Invalid username or password."
-        if not account.is_active:
-            return False, "This account has been disabled."
-        if not verify_password(password, account.password_hash):
-            return False, "Invalid username or password."
-        self.current_user = account
-        self.session_id = "sess_" + uuid.uuid4().hex[:8]
-        return True, "OK"
+        """Returns (success: bool, message: str). bcrypt check runs server-side in Lambda."""
+        try:
+            account = self._storage.authenticate(username, password)
+            self.current_user = account
+            self.session_id = "sess_" + uuid.uuid4().hex[:8]
+            return True, "OK"
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 0
+            if status in (401, 403):
+                try:
+                    msg = e.response.json().get("error", "Authentication failed.")
+                except Exception:
+                    msg = "Authentication failed."
+                return False, msg
+            return False, "Cannot connect to server. Check your internet connection."
+        except Exception:
+            return False, "Cannot connect to server. Check your internet connection."
 
     def logout(self) -> None:
         self.current_user = None

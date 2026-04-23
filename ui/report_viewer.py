@@ -252,12 +252,47 @@ class ReportViewer(ctk.CTkFrame):
         table = ctk.CTkScrollableFrame(self._tab_activity, fg_color="transparent")
         table.pack(fill="both", expand=True, padx=4, pady=4)
 
+        # ── Day Summary ────────────────────────────────────────────── #
+        day_total_s  = sum(s.get("summary", {}).get("total_active_seconds", 0)
+                           + s.get("summary", {}).get("total_idle_seconds", 0)
+                           for s in sessions)
+        day_active_s = sum(s.get("summary", {}).get("total_active_seconds", 0) for s in sessions)
+        day_idle_s   = sum(s.get("summary", {}).get("total_idle_seconds",  0) for s in sessions)
+
+        day_card = ctk.CTkFrame(table, fg_color="#0f3460", corner_radius=10)
+        day_card.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(
+            day_card, text="Day Total",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=COLOR_TEXT, anchor="w",
+        ).pack(anchor="w", padx=14, pady=(8, 4))
+
+        day_stats_row = ctk.CTkFrame(day_card, fg_color="transparent")
+        day_stats_row.pack(fill="x", padx=12, pady=(0, 10))
+        for label, val in [
+            ("Total Time",  _fmt_seconds(day_total_s)),
+            ("Active Time", _fmt_seconds(day_active_s)),
+            ("Idle Time",   _fmt_seconds(day_idle_s)),
+            ("Sessions",    str(len(sessions))),
+        ]:
+            f = ctk.CTkFrame(day_stats_row, fg_color="#1a4a7a", corner_radius=6)
+            f.pack(side="left", padx=(0, 6))
+            ctk.CTkLabel(f, text=val, font=ctk.CTkFont(size=13, weight="bold"),
+                         text_color=COLOR_TEXT).pack(padx=12, pady=(4, 0))
+            ctk.CTkLabel(f, text=label, font=ctk.CTkFont(size=10),
+                         text_color=COLOR_TEXT_MUTED).pack(padx=12, pady=(0, 4))
+
+        # ── Per-Session Cards ──────────────────────────────────────── #
         for session in sessions:
             login = (session.get("login_time") or "")[:19]
             logout_raw = session.get("logout_time")
             logout = logout_raw[:19] if logout_raw else "Active"
 
             s = session.get("summary", {})
+            active_s = s.get("total_active_seconds", 0)
+            idle_s   = s.get("total_idle_seconds", 0)
+            total_s  = active_s + idle_s
+
             sess_card = ctk.CTkFrame(table, fg_color=COLOR_CARD, corner_radius=8)
             sess_card.pack(fill="x", pady=4)
 
@@ -281,10 +316,12 @@ class ReportViewer(ctk.CTkFrame):
             stats_row = ctk.CTkFrame(sess_card, fg_color="transparent")
             stats_row.pack(fill="x", padx=12, pady=(0, 8))
             stats = [
-                ("Keystrokes", f"{s.get('total_keystrokes', 0):,}"),
-                ("Clicks", f"{s.get('total_clicks', 0):,}"),
-                ("Active", _fmt_seconds(s.get("total_active_seconds", 0))),
-                ("Screenshots", str(s.get("screenshots_count", 0))),
+                ("Total Time",   _fmt_seconds(total_s)),
+                ("Active Time",  _fmt_seconds(active_s)),
+                ("Idle Time",    _fmt_seconds(idle_s)),
+                ("Keystrokes",   f"{s.get('total_keystrokes', 0):,}"),
+                ("Clicks",       f"{s.get('total_clicks', 0):,}"),
+                ("Screenshots",  str(s.get("screenshots_count", 0))),
             ]
             for label, val in stats:
                 f = ctk.CTkFrame(stats_row, fg_color="#1e2d4a", corner_radius=6)

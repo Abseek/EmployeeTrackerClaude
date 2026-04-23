@@ -10,8 +10,8 @@ from config import (
 from ui.widgets.stat_card import StatCard
 from ui.widgets.activity_chart import ActivityChart
 
-# How many 5-second ticks before a full DB refresh
-_DB_REFRESH_EVERY_N_TICKS = 12   # = 60 seconds
+# How many 1-second ticks before a full DB refresh
+_DB_REFRESH_EVERY_N_TICKS = 60   # = 60 seconds
 
 
 def _fmt_seconds(seconds: int) -> str:
@@ -31,6 +31,19 @@ class EmployeeDashboard(ctk.CTkFrame):
         # Start counter at threshold so the very first _refresh() triggers a DB fetch
         self._tick_counter = _DB_REFRESH_EVERY_N_TICKS
         self._last_hourly: list = []      # avoid redrawing chart when data unchanged
+
+        # ── Live time state ─────────────────────────────────────────── #
+        # _shift_start_time : wall-clock moment the current shift started.
+        #   Used to compute current session elapsed via (now - shift_start).
+        #   None when shift is not running.
+        # _completed_s      : total seconds from sessions that have a logout_time
+        #   (finished sessions). Excludes the currently running session so we
+        #   never rely on DB timing for the in-progress session.
+        # _committed_idle_s : idle seconds from committed activity_buckets (DB).
+        #   Updated every 60 s. Does NOT include current unflushed bucket.
+        self._shift_start_time: datetime = None
+        self._completed_s: int = 0
+        self._committed_idle_s: int = 0
 
         self._build()
         self._refresh()        # fires DB fetch immediately (counter already at threshold)
@@ -159,7 +172,14 @@ class EmployeeDashboard(ctk.CTkFrame):
     def _on_shift_changed(self):
         self._update_shift_ui()
         self._shift_btn.configure(state="normal")
-        # Immediately kick off a DB refresh so stats reflect the change
+        if self._tracker and self._tracker.is_running:
+            # Record the exact wall-clock moment the shift started.
+            # Tier 1 will compute elapsed as (now - _shift_start_time) so
+            # the total never jumps regardless of DB timing or system idle state.
+            self._shift_start_time = datetime.now()
+        else:
+            self._shift_start_time = None
+        # Trigger an immediate DB fetch so _completed_s / _committed_idle_s refresh
         self._tick_counter = _DB_REFRESH_EVERY_N_TICKS
 
     def _update_shift_ui(self):
@@ -196,9 +216,23 @@ class EmployeeDashboard(ctk.CTkFrame):
         if not self.winfo_exists():
             return
 
-        # --- Tier 1: instant, no DB, no widget rebuild ---
+        # --- Tier 1: instant, no DB — update clock and live time cards ---
         self._time_label.configure(text=datetime.now().strftime("%A, %B %d  %H:%M"))
         self._update_shift_ui()
+
+        if self._tracker and self._tracker.is_running and self._shift_start_time:
+            # Total = finished sessions (DB) + current session elapsed (wall clock).
+            # Wall clock is the source of truth — no DB calls, no GetLastInputInfo
+            # weirdness. This guarantees the total ticks up cleanly every second.
+            current_elapsed = (datetime.now() - self._shift_start_time).total_seconds()
+            display_total = int(self._completed_s + current_elapsed)
+
+            # Idle: committed bucket data (DB, 60-s cadence) + live idle capped to
+            # current_elapsed so pre-shift system idle never leaks into the display.
+            live_idle = min(self._tracker.get_live_stats()["idle_seconds"], current_elapsed)
+            display_idle   = int(self._committed_idle_s + live_idle)
+            display_active = max(0, display_total - display_idle)
+            self._update_time_cards(display_active, display_idle)
 
         # --- Tier 2: DB refresh every N ticks ---
         self._tick_counter += 1
@@ -224,17 +258,27 @@ class EmployeeDashboard(ctk.CTkFrame):
         finally:
             self._refreshing = False
 
-    def _apply_data(self, summary, hourly):
-        """Called on main thread. Only updates what actually changed."""
-        if not self.winfo_exists():
-            return
-
-        active_s = summary["active_seconds"]
-        idle_s = summary["idle_seconds"]
+    def _update_time_cards(self, active_s: int, idle_s: int):
         total_s = active_s + idle_s
         self._card_total.set_value(value=_fmt_seconds(total_s))
         self._card_time.set_value(value=_fmt_seconds(active_s))
         self._card_idle.set_value(value=_fmt_seconds(idle_s))
+
+    def _apply_data(self, summary, hourly):
+        """Called on main thread with fresh DB data."""
+        if not self.winfo_exists():
+            return
+
+        # Update the DB-sourced baselines used by Tier 1 live ticker.
+        self._completed_s     = summary.get("completed_seconds", 0)
+        self._committed_idle_s = summary["idle_seconds"]
+
+        # When shift is NOT running show the full DB totals directly.
+        if not (self._tracker and self._tracker.is_running):
+            self._update_time_cards(summary["active_seconds"], summary["idle_seconds"])
+
+        # When running, Tier 1 handles the display via wall-clock — don't
+        # overwrite the cards here or it causes a visible flicker/jump.
 
         # Only redraw chart if data actually changed
         if hourly != self._last_hourly:
@@ -247,7 +291,7 @@ class EmployeeDashboard(ctk.CTkFrame):
 
     def _schedule_refresh(self):
         if self.winfo_exists():
-            self.after(5000, self._auto_refresh)
+            self.after(1000, self._auto_refresh)
 
     def _auto_refresh(self):
         if not self.winfo_exists():

@@ -32,8 +32,14 @@ class EmployeeTrackerApp(ctk.CTk):
         except Exception:
             pass
 
-        # Core services
-        self.storage = Storage()
+        # Core services — Storage() no longer opens a DB connection at init;
+        # connectivity errors surface on the first API call (is_first_run below).
+        try:
+            self.storage = Storage()
+        except Exception as e:
+            import tkinter.messagebox as mb
+            mb.showerror("Startup Error", f"Failed to initialise tracker:\n{e}")
+            os._exit(1)
         self.session = SessionManager(self.storage)
         self.tracker = None
         self.tray = TrayIcon(self)
@@ -43,7 +49,15 @@ class EmployeeTrackerApp(ctk.CTk):
         self._content_frame = None
 
         # First run: create default admin account
-        self._first_run = self.storage.is_first_run()
+        try:
+            self._first_run = self.storage.is_first_run()
+        except Exception as e:
+            import tkinter.messagebox as mb
+            mb.showerror(
+                "Connection Error",
+                f"Cannot reach the tracker API.\nCheck your internet connection.\n\n{e}",
+            )
+            os._exit(1)
         if self._first_run:
             self.session.create_default_admin()
 
@@ -182,8 +196,6 @@ class EmployeeTrackerApp(ctk.CTk):
             self.destroy()
         except Exception:
             pass
-        # Force-kill the process. Without this, MySQL connection pool threads
-        # (non-daemon) keep the process alive indefinitely after the window closes.
         os._exit(0)
 
     # ------------------------------------------------------------------ #

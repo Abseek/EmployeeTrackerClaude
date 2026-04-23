@@ -2,19 +2,16 @@ import os
 import sys
 from pathlib import Path
 
-# Database connection
-DB_HOST = "193.203.184.197"
-DB_USER = "u420709713_Abhishek"
-DB_PASSWORD = "Abhishek#77699"
-DB_NAME = "u420709713_Claude_Tracker"
-DB_PORT = 3306
+# API endpoint (replaces direct DB connection — credentials live only in Lambda)
+API_ENDPOINT = "https://cs946ga7qh.execute-api.eu-north-1.amazonaws.com/dev_v1/track"
+API_KEY = "jmCJmzd9t760xJUzxaz2O7hAPwgDzg8z6nigX9zN"
 
 # FTP for screenshot hosting
 FTP_HOST = "ftp.shophoustondiamonddistrict.com"
 FTP_USER = "u420709713.ClaudeTracker"
 FTP_PASSWORD = "Abhishek#77699"
-FTP_BASE_DIR = "/home/u420709713/domains/shophoustondiamonddistrict.com/claudeTracker"
-FTP_HTTP_BASE = "https://shophoustondiamonddistrict.com/claudeTracker"
+FTP_BASE_DIR = "/ClaudeTracker"
+FTP_HTTP_BASE = "https://shophoustondiamonddistrict.com/ClaudeTracker"
 
 APP_NAME = "EmployeeTracker"
 APP_VERSION = "1.0.0"

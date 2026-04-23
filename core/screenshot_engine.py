@@ -11,6 +11,27 @@ from PIL import Image
 from config import FTP_HOST, FTP_USER, FTP_PASSWORD, FTP_BASE_DIR, FTP_HTTP_BASE
 
 
+def _ftp_mkdirs(ftp: ftplib.FTP, remote_dir: str):
+    """Navigate to remote_dir, creating each missing directory level along the way.
+    FTP's MKD only creates one level at a time, so we walk the path component by
+    component — same as 'mkdir -p' on the server side."""
+    try:
+        ftp.cwd(remote_dir)
+        return  # already exists, fast path
+    except ftplib.error_perm:
+        pass
+
+    parts = [p for p in remote_dir.split("/") if p]
+    path = ""
+    for part in parts:
+        path += "/" + part
+        try:
+            ftp.mkd(path)
+        except ftplib.error_perm:
+            pass  # already exists at this level
+    ftp.cwd(remote_dir)
+
+
 class ScreenshotEngine:
     def __init__(self, employee_id: str, settings: dict, storage):
         self._employee_id = employee_id
@@ -72,10 +93,11 @@ class ScreenshotEngine:
             path = screenshots_dir / filename
 
             with mss.mss() as sct:
-                monitor = sct.monitors[1]  # primary monitor
+                monitor = sct.monitors[0]  # all monitors combined
                 screenshot = sct.grab(monitor)
-                img = Image.frombytes("RGBA", screenshot.size, screenshot.bgra)
-                img = img.convert("RGB")
+                # Use .rgb (correct channel order) instead of .bgra interpreted as RGBA,
+                # which swaps the Red and Blue channels in the saved image.
+                img = Image.frombytes("RGB", screenshot.size, screenshot.rgb)
 
             if img.width > self._max_width:
                 ratio = self._max_width / img.width
@@ -107,11 +129,8 @@ class ScreenshotEngine:
         try:
             with ftplib.FTP(FTP_HOST, timeout=30) as ftp:
                 ftp.login(FTP_USER, FTP_PASSWORD)
-                try:
-                    ftp.mkd(remote_dir)
-                except ftplib.error_perm:
-                    pass  # already exists
-                ftp.cwd(remote_dir)
+                ftp.set_pasv(True)  # passive mode works through NAT/firewalls
+                _ftp_mkdirs(ftp, remote_dir)
                 with open(local_path, "rb") as f:
                     ftp.storbinary(f"STOR {filename}", f)
             ftp_url = f"{FTP_HTTP_BASE}/{date_str}/{filename}"

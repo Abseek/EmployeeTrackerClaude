@@ -47,10 +47,22 @@ class ScreenshotGallery(ctk.CTkScrollableFrame):
         self._thumbs.clear()
         self._paths = list(paths)
 
+        loadable = [p for p in paths if p is not None]
+
         if not paths:
             ctk.CTkLabel(
                 self,
                 text="No screenshots for this date.",
+                text_color=COLOR_TEXT_MUTED,
+                font=ctk.CTkFont(size=12),
+            ).grid(row=0, column=0, padx=20, pady=20)
+            return
+
+        if not loadable:
+            ctk.CTkLabel(
+                self,
+                text=f"{len(paths)} screenshot(s) were captured but could not be uploaded to the server.\n"
+                     "They are stored locally on the employee's machine.",
                 text_color=COLOR_TEXT_MUTED,
                 font=ctk.CTkFont(size=12),
             ).grid(row=0, column=0, padx=20, pady=20)
@@ -61,7 +73,9 @@ class ScreenshotGallery(ctk.CTkScrollableFrame):
             row = idx // cols
             col = idx % cols
             placeholder = self._make_card(item, idx, row, col)
-            # Load image in a background thread
+            if item is None:
+                # Already shown as "Not uploaded" by _make_card — no thread needed
+                continue
             threading.Thread(
                 target=self._load_thumb_bg,
                 args=(item, idx, placeholder),
@@ -69,9 +83,28 @@ class ScreenshotGallery(ctk.CTkScrollableFrame):
             ).start()
 
     def _make_card(self, item, idx: int, row: int, col: int) -> ctk.CTkLabel:
-        """Create a card with a 'Loading…' placeholder; return the placeholder label."""
+        """Create a card placeholder. Returns the label to be updated once the image loads."""
         card = ctk.CTkFrame(self, fg_color=COLOR_CARD, corner_radius=8)
         card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
+
+        if item is None:
+            # Screenshot was captured but FTP upload failed — show a static error card
+            placeholder = ctk.CTkLabel(
+                card,
+                text="Not uploaded",
+                width=THUMB_W,
+                height=THUMB_H,
+                text_color=COLOR_TEXT_MUTED,
+                font=ctk.CTkFont(size=10),
+            )
+            placeholder.pack(padx=4, pady=(4, 0))
+            ctk.CTkLabel(
+                card,
+                text="Upload failed",
+                font=ctk.CTkFont(size=10),
+                text_color=COLOR_TEXT_MUTED,
+            ).pack(pady=(2, 4))
+            return placeholder
 
         placeholder = ctk.CTkLabel(
             card,
@@ -105,7 +138,12 @@ class ScreenshotGallery(ctk.CTkScrollableFrame):
                         lambda i=img, ix=idx, pl=placeholder: self._set_thumb(i, ix, pl),
                     )
             except Exception:
-                pass
+                # Show a visible error instead of staying as "Loading…" forever
+                if self.winfo_exists() and placeholder.winfo_exists():
+                    self.after(
+                        0,
+                        lambda pl=placeholder: pl.configure(text="Failed to load"),
+                    )
 
     def _set_thumb(self, img: Image.Image, idx: int, placeholder: ctk.CTkLabel):
         """Main thread: create CTkImage and update the placeholder label."""
@@ -116,7 +154,14 @@ class ScreenshotGallery(ctk.CTkScrollableFrame):
         placeholder.configure(image=ctk_img, text="")
 
     def _open_fullscreen(self, idx: int):
-        viewer = FullscreenViewer(self, self._paths, idx)
+        # Filter out None entries (upload-failed placeholders) before opening viewer
+        loadable = [(i, p) for i, p in enumerate(self._paths) if p is not None]
+        if not loadable:
+            return
+        # Find which position in the loadable list corresponds to this idx
+        loadable_paths = [p for _, p in loadable]
+        loadable_idx = next((n for n, (i, _) in enumerate(loadable) if i == idx), 0)
+        viewer = FullscreenViewer(self, loadable_paths, loadable_idx)
         viewer.grab_set()
 
 
